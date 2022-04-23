@@ -42,6 +42,7 @@ def run(problem, params):
 
     #Main Loop
     for it in range(maxit):
+
         costs = np.array([x.cost for x in pop])
         avg_cost = np.mean(costs)
         if avg_cost != 0:
@@ -58,8 +59,9 @@ def run(problem, params):
             #p2 = pop[q[1]]
 
             #PerformRoulette Wheel Selection
-            p1 = pop[roulette_wheel_selection(probs)]
-            p2 = pop[roulette_wheel_selection(probs)]
+            # p1 = pop[roulette_wheel_selection(probs)]
+            # p2 = pop[roulette_wheel_selection(probs)]
+            p1, p2 = tournament_selection(pop)
 
             #Perform Crossover
             #c1, c2 = crossover(p1, p2, gamma)
@@ -138,4 +140,10 @@ def roulette_wheel_selection(p):
     c = np.cumsum(p)
     r = sum(p)*np.random.rand()
     ind = np.argwhere(r <= c)
-    return ind[0][0] 
+    return ind[0][0]
+
+def tournament_selection(pop):
+    parents = random.choices(pop, k=5)
+    parents = sorted(parents, key=lambda pop: pop.cost, reverse=True)
+    return parents[0], parents[1]
+
