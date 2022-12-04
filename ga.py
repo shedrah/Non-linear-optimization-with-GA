@@ -1,16 +1,21 @@
 import numpy as np
 import random
-from ypstruct import structure
+
+from __init__ import structure
+import pandas as pd
+import app
 
 def run(problem, params):
-    
-    #Problem information
+
+    # Problem information
     costfunc = problem.costfunc
     nvar = problem.nvar
     varmin = problem.varmin
     varmax = problem.varmax
+    # Problem constraints
+    con_flags = problem.cons_flag
 
-    #Parameters
+    # Parameters
     maxit = params.maxit
     npop = params.npop
     beta = params.beta
@@ -19,89 +24,99 @@ def run(problem, params):
     gamma = params.gamma
     mu = params.mu
     sigma = params.sigma
+    crosspro = params.crosspro
 
-    #Empty Individual Template
+    # Empty Individual Template
     empty_individual = structure()
     empty_individual.position = None
     empty_individual.cost = None
-
-    #BestSolution Ever Found
+    empty_individual.constraints = []
+    # BestSolution Ever Found
     bestsol = empty_individual.deepcopy()
     bestsol.cost = np.inf
 
-    #Initialize Population
+    # Initialize Population
     pop = empty_individual.repeat(npop)
     for i in range(0, npop):
         pop[i].position = np.random.uniform(varmin, varmax, nvar)
-        pop[i].cost = costfunc(pop[i].position)
+        for j in range(0, len(costfunc(pop[i].position))-1):
+            pop[i].constraints.append(costfunc(pop[i].position)[j+1])
+    # Check initial population for constraints violation - death penalty
+    apply_constraints(varmin, varmax, nvar, pop, costfunc, npop, con_flags)
+
+    for i in range(0, npop):
+        # pop[i].position = np.random.uniform(varmin, varmax, nvar)
+        pop[i].cost = costfunc(pop[i].position)[0]
+        # pop[i].cost = pd.eval("costfunc")(*pop[i].position)
         if pop[i].cost < bestsol.cost:
             bestsol = pop[i].deepcopy()
-    
-    #Best Cost of Iterations
+
+    # Best Cost of Iterations
     bestcost = np.empty(maxit)
 
-    #Main Loop
+    # Main Loop
     for it in range(maxit):
-
-        costs = np.array([x.cost for x in pop])
-        avg_cost = np.mean(costs)
-        if avg_cost != 0:
-            costs = costs/avg_cost
-        probs = np.exp(-beta*costs)   
 
 
         popc = []
-        for _ in range(nc//2):
+        for pop_it in range(nc//2):
 
-            #Select Parents
-            #q = np.random.permutation(npop)
-            #p1 = pop[q[0]]
-            #p2 = pop[q[1]]
-
-            #PerformRoulette Wheel Selection
-            # p1 = pop[roulette_wheel_selection(probs)]
-            # p2 = pop[roulette_wheel_selection(probs)]
             p1, p2 = tournament_selection(pop)
 
-            #Perform Crossover
-            #c1, c2 = crossover(p1, p2, gamma)
-            c1, c2 = singlepoint_crossover(p1, p2)
 
-            #Perform Mutation
+            # Perform Crossover
+            r = np.random.rand()
+            if r < crosspro:
+                c1, c2 = singlepoint_crossover(p1, p2)
+            else:
+                c1, c2 = p1, p2
+
+            # Perform Mutation
             c1 = mutate(c1, mu, sigma)
             c2 = mutate(c2, mu, sigma)
+            children = [c1, c2]
 
-            #Apply Bounds
-            apply_bound(c1, varmin, varmax)
-            apply_bound(c2, varmin, varmax)
+            # Apply Constraints
+            children = apply_constraints(varmin, varmax, nvar, children, costfunc, 2, con_flags)
+            # Apply Bounds
+            apply_bound(children[0], varmin, varmax)
+            apply_bound(children[1], varmin, varmax)
 
-            #Evaluate First Offspring
-            c1.cost = costfunc(c1.position)
-            if c1.cost < bestsol.cost:
-                bestsol = c1.deepcopy()
-            
-            #Evaluate Second Offspring
-            c2.cost = costfunc(c2.position)
-            if c2.cost < bestsol.cost:
-                bestsol = c2.deepcopy()
-            
-            #Add Offspring to popc
-            popc.append(c1)
-            popc.append(c2)
 
-            #Merge, Sort and Select
+
+            # Evaluate First Offspring
+            children[0].cost = costfunc(children[0].position)[0]
+            if children[0].cost < bestsol.cost:
+                bestsol = children[0].deepcopy()
+
+            # Evaluate Second Offspring
+            children[1].cost = costfunc(children[1].position)[0]
+            if children[1].cost < bestsol.cost:
+                bestsol = children[1].deepcopy()
+
+            # Add Offspring to popc
+            popc.append(children[0])
+            popc.append(children[1])
+
+            # Merge, Sort and Select
             pop += popc
             pop = sorted(pop, key=lambda x: x.cost)
             pop = pop[0:npop]
 
-            #Store Best Cost
+            # Store Best Cost
             bestcost[it] = bestsol.cost
-            
-            #Show Iteration Information
+
+            # Show Iteration Information
             print("Iteration {}: Best Cost = {}:".format(it, bestcost[it]))
+            # if pop_it == (nc // 2)-1:
+            #     app.plot_graph(problem, pop, it, bestcost[it])
+            #     print(bestcost[it])
+
+    if nvar<=2:
+        app.plot_graph(problem, pop, it, bestcost[it]) # wydrukuj jeden raz
 
 
-    #Output
+    # Output
     out = structure()
     out.pop = pop
     out.bestsol = bestsol
@@ -129,6 +144,7 @@ def mutate(x, mu, sigma):
     y = x.deepcopy()
     flag = np.random.rand(*x.position.shape) <= mu
     ind = np.argwhere(flag)
+    res= sigma*np.random.randn(*ind.shape)
     y.position[ind] += sigma*np.random.randn(*ind.shape)
     return y
 
@@ -143,7 +159,41 @@ def roulette_wheel_selection(p):
     return ind[0][0]
 
 def tournament_selection(pop):
+    # while
     parents = random.choices(pop, k=5)
-    parents = sorted(parents, key=lambda pop: pop.cost, reverse=True)
+    # end while
+    parents = sorted(parents, key=lambda pop: pop.cost, reverse=False)
     return parents[0], parents[1]
 
+def apply_constraints(varmin, varmax, nvar, pop, costfunc, npop, con_flags): #added cons_flags
+    death_flag = True
+    c_list = []
+    tolerance = 0.001
+    c_flags_iterator = 0
+    for i in range(0, npop):
+        for element in range(1, len(costfunc(pop[i].constraints))):
+            pop[i].constraints[element-1] = costfunc(pop[i].position)[element]
+    for i in range(0, len(pop)):
+        while (True):
+            pop[i].position = np.random.uniform(varmin, varmax, nvar)
+            for j in range(0, len(pop[i].constraints)):
+                pop[i].constraints[j] = costfunc(pop[i].position)[j+1]
+            for constraint in pop[i].constraints:
+                if(con_flags[c_flags_iterator]=='Row' and (constraint-tolerance) <= 0.000):
+                    c_list.append(True)
+                elif (con_flags[c_flags_iterator] == 'NRow' and constraint < 0.000):
+                    c_list.append(True)
+                elif (con_flags[c_flags_iterator] == 'ORow' and constraint <= 0.000):
+                    c_list.append(True)
+                else:
+                    c_list.append(False)
+                if(constraint==pop[i].constraints[-1]):
+                    c_flags_iterator=0
+                else:
+                    c_flags_iterator = c_flags_iterator + 1
+            if(all(c_list)):
+                c_flags_iterator=0
+                break
+            c_list = []
+
+    return pop
